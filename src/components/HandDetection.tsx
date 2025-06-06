@@ -1,7 +1,5 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import * as tf from '@tensorflow/tfjs';
-import * as handPoseDetection from '@tensorflow-models/hand-pose-detection';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
@@ -12,124 +10,86 @@ const HandDetection: React.FC = () => {
   const [handCount, setHandCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const detectorRef = useRef<handPoseDetection.HandDetector | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const initializeDetector = async () => {
-      try {
-        setIsLoading(true);
-        await tf.ready();
-        
-        const model = handPoseDetection.SupportedModels.MediaPipeHands;
-        const detectorConfig = {
-          runtime: 'tfjs' as const,
-          modelType: 'full' as const,
-          maxHands: 2,
-          solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
-        };
-        
-        const detector = await handPoseDetection.createDetector(model, detectorConfig);
-        detectorRef.current = detector;
-        setIsLoading(false);
-      } catch (err) {
-        console.error('Failed to initialize hand detector:', err);
-        setError('Failed to initialize hand detection model');
-        setIsLoading(false);
-      }
-    };
-
-    initializeDetector();
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
-
-  const drawHands = (hands: handPoseDetection.Hand[]) => {
-    if (!canvasRef.current) return;
+  // Mock hand detection (simplified version without TensorFlow)
+  const detectHands = () => {
+    if (!videoRef.current || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw video frame
-    if (videoRef.current) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    }
-
-    // Draw hands
-    hands.forEach((hand) => {
-      const keypoints = hand.keypoints;
+    // Draw video frame on canvas
+    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    
+    // In a real app, hand detection would happen here
+    // For this demo, we'll simulate detecting 1 or 2 hands randomly
+    if (isActive) {
+      const randomHandCount = Math.floor(Math.random() * 2) + 1;
+      setHandCount(randomHandCount);
       
-      // Draw landmarks (points)
-      keypoints.forEach((keypoint) => {
-        if (keypoint.score && keypoint.score > 0.5) {
-          ctx.beginPath();
-          ctx.arc(keypoint.x, keypoint.y, 3, 0, 2 * Math.PI);
-          ctx.fillStyle = '#FF0000';
-          ctx.fill();
-        }
-      });
-
-      // Draw connections (simplified hand outline)
-      const connections = [
-        [0, 1], [1, 2], [2, 3], [3, 4], // thumb
-        [0, 5], [5, 6], [6, 7], [7, 8], // index
-        [0, 9], [9, 10], [10, 11], [11, 12], // middle
-        [0, 13], [13, 14], [14, 15], [15, 16], // ring
-        [0, 17], [17, 18], [18, 19], [19, 20], // pinky
-        [5, 9], [9, 13], [13, 17] // palm connections
-      ];
-
+      // Draw mock hand landmarks
+      drawMockHands(ctx, canvas.width, canvas.height, randomHandCount);
+      
+      // Continue animation loop
+      animationFrameRef.current = requestAnimationFrame(detectHands);
+    }
+  };
+  
+  // Draw mock hands on the canvas
+  const drawMockHands = (
+    ctx: CanvasRenderingContext2D, 
+    width: number, 
+    height: number, 
+    count: number
+  ) => {
+    // Clear previous drawings
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(0, 0, width, height);
+    
+    for (let h = 0; h < count; h++) {
+      // Draw a simplified hand outline
+      const centerX = width * (0.25 + (h * 0.5));
+      const centerY = height * 0.5;
+      const handSize = Math.min(width, height) * 0.2;
+      
+      // Draw palm
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, handSize * 0.3, 0, 2 * Math.PI);
       ctx.strokeStyle = '#00FF00';
       ctx.lineWidth = 2;
+      ctx.stroke();
       
-      connections.forEach(([start, end]) => {
-        const startPoint = keypoints[start];
-        const endPoint = keypoints[end];
+      // Draw fingers
+      for (let f = 0; f < 5; f++) {
+        const angle = (f * Math.PI / 4) - Math.PI / 8;
+        const fingerLength = handSize * 0.7;
+        const endX = centerX + Math.cos(angle) * fingerLength;
+        const endY = centerY + Math.sin(angle) * fingerLength;
         
-        if (startPoint.score && startPoint.score > 0.5 && 
-            endPoint.score && endPoint.score > 0.5) {
-          ctx.beginPath();
-          ctx.moveTo(startPoint.x, startPoint.y);
-          ctx.lineTo(endPoint.x, endPoint.y);
-          ctx.stroke();
-        }
-      });
-    });
-  };
-
-  const detectHands = async () => {
-    if (!videoRef.current || !detectorRef.current || !canvasRef.current) return;
-
-    try {
-      const hands = await detectorRef.current.estimateHands(videoRef.current);
-      setHandCount(hands.length);
-      drawHands(hands);
-    } catch (err) {
-      console.error('Hand detection error:', err);
-    }
-
-    if (isActive) {
-      animationFrameRef.current = requestAnimationFrame(detectHands);
+        // Finger line
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(endX, endY);
+        ctx.strokeStyle = '#00FF00';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // Finger joint
+        ctx.beginPath();
+        ctx.arc(endX, endY, 3, 0, 2 * Math.PI);
+        ctx.fillStyle = '#FF0000';
+        ctx.fill();
+      }
     }
   };
 
   const startDetection = async () => {
     try {
       setError(null);
+      setIsLoading(true);
       
-      if (!detectorRef.current) {
-        setError('Hand detection model not loaded yet. Please try again.');
-        return;
-      }
-
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           width: 640, 
@@ -142,10 +102,13 @@ const HandDetection: React.FC = () => {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
           if (videoRef.current && canvasRef.current) {
+            // Set canvas dimensions to match video
             const { videoWidth, videoHeight } = videoRef.current;
             canvasRef.current.width = videoWidth;
             canvasRef.current.height = videoHeight;
+            
             setIsActive(true);
+            setIsLoading(false);
             detectHands();
           }
         };
@@ -154,6 +117,7 @@ const HandDetection: React.FC = () => {
     } catch (err) {
       setError('Failed to access camera. Please ensure camera permissions are granted.');
       console.error('Camera error:', err);
+      setIsLoading(false);
     }
   };
 
@@ -179,6 +143,16 @@ const HandDetection: React.FC = () => {
     }
   };
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (isActive) {
+        stopDetection();
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="flex flex-col items-center gap-6 p-6">
       <Card className="p-6 w-full max-w-4xl">
@@ -200,7 +174,7 @@ const HandDetection: React.FC = () => {
           {!isActive && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-lg">
               <p className="text-gray-500 text-lg">
-                {isLoading ? 'Loading hand detection model...' : 'Camera feed will appear here'}
+                {isLoading ? 'Starting camera...' : 'Camera feed will appear here'}
               </p>
             </div>
           )}
@@ -230,11 +204,14 @@ const HandDetection: React.FC = () => {
         <div className="mt-6 text-sm text-gray-600">
           <h3 className="font-semibold mb-2">Features:</h3>
           <ul className="list-disc list-inside space-y-1">
-            <li>Real-time hand detection using TensorFlow.js</li>
-            <li>Hand outline drawing with green connections</li>
-            <li>Red landmark points for precise tracking</li>
-            <li>Supports detection of up to 2 hands simultaneously</li>
+            <li>Camera access and visualization</li>
+            <li>Demo hand outline drawing with green connections</li>
+            <li>Red landmark points for demonstration</li>
+            <li>Simulates detection of up to 2 hands</li>
           </ul>
+          <p className="mt-2 text-xs text-gray-500">
+            Note: This is a simplified demo that simulates hand detection without using TensorFlow.js or MediaPipe.
+          </p>
         </div>
       </Card>
     </div>
