@@ -11,64 +11,88 @@ const HandDetection: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const animationFrameRef = useRef<number | null>(null);
+  const lastFrameTime = useRef(0);
 
-  // Mock hand detection (simplified version without TensorFlow)
-  const detectHands = () => {
+  // Draw the video frame and simulated hands on the canvas
+  const updateCanvas = (timestamp: number) => {
     if (!videoRef.current || !canvasRef.current) return;
+
+    // Throttle to ~30fps for better performance
+    if (timestamp - lastFrameTime.current < 33) {
+      if (isActive) {
+        animationFrameRef.current = requestAnimationFrame(updateCanvas);
+      }
+      return;
+    }
+    lastFrameTime.current = timestamp;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Draw video frame on canvas
+    // Draw video frame to show live camera feed
     ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
     
-    // In a real app, hand detection would happen here
-    // For this demo, we'll simulate detecting 1 or 2 hands randomly
     if (isActive) {
+      // In a real app, hand detection would happen here
+      // For this demo, we'll simulate detecting hands with random positions
       const randomHandCount = Math.floor(Math.random() * 2) + 1;
       setHandCount(randomHandCount);
       
-      // Draw mock hand landmarks
-      drawMockHands(ctx, canvas.width, canvas.height, randomHandCount);
+      // Draw simulated hands with movement
+      const time = Date.now() * 0.001;
+      drawSimulatedHands(ctx, canvas.width, canvas.height, randomHandCount, time);
       
       // Continue animation loop
-      animationFrameRef.current = requestAnimationFrame(detectHands);
+      animationFrameRef.current = requestAnimationFrame(updateCanvas);
     }
   };
   
-  // Draw mock hands on the canvas
-  const drawMockHands = (
+  // Draw animated simulated hands
+  const drawSimulatedHands = (
     ctx: CanvasRenderingContext2D, 
     width: number, 
     height: number, 
-    count: number
+    count: number,
+    time: number
   ) => {
-    // Clear previous drawings
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    // Add a subtle overlay to make hands more visible
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
     ctx.fillRect(0, 0, width, height);
     
     for (let h = 0; h < count; h++) {
-      // Draw a simplified hand outline
-      const centerX = width * (0.25 + (h * 0.5));
-      const centerY = height * 0.5;
-      const handSize = Math.min(width, height) * 0.2;
+      // Create some motion with sine waves
+      const xOffset = Math.sin(time * 0.7 + h * 1.5) * width * 0.15;
+      const yOffset = Math.cos(time * 0.5 + h * 2.3) * height * 0.1;
+      
+      // Base position for each hand
+      const centerX = width * (0.25 + (h * 0.5)) + xOffset;
+      const centerY = height * 0.5 + yOffset;
+      const handSize = Math.min(width, height) * 0.15;
       
       // Draw palm
       ctx.beginPath();
-      ctx.arc(centerX, centerY, handSize * 0.3, 0, 2 * Math.PI);
+      ctx.arc(centerX, centerY, handSize * 0.25, 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+      ctx.fill();
       ctx.strokeStyle = '#00FF00';
       ctx.lineWidth = 2;
       ctx.stroke();
       
-      // Draw fingers
+      // Draw fingers with animation
       for (let f = 0; f < 5; f++) {
-        const angle = (f * Math.PI / 4) - Math.PI / 8;
-        const fingerLength = handSize * 0.7;
+        // Animate finger angles
+        const angleOffset = Math.sin(time * 2 + f * 0.7) * 0.2;
+        const angle = (f * Math.PI / 4) - Math.PI / 8 + angleOffset;
+        
+        // Animate finger length
+        const lengthMod = Math.sin(time * 3 + f * 1.2) * 0.1 + 0.9;
+        const fingerLength = handSize * 0.7 * lengthMod;
+        
         const endX = centerX + Math.cos(angle) * fingerLength;
         const endY = centerY + Math.sin(angle) * fingerLength;
         
-        // Finger line
+        // Draw finger segments
         ctx.beginPath();
         ctx.moveTo(centerX, centerY);
         ctx.lineTo(endX, endY);
@@ -76,9 +100,17 @@ const HandDetection: React.FC = () => {
         ctx.lineWidth = 2;
         ctx.stroke();
         
-        // Finger joint
+        // Draw joints
         ctx.beginPath();
-        ctx.arc(endX, endY, 3, 0, 2 * Math.PI);
+        ctx.arc(endX, endY, 4, 0, 2 * Math.PI);
+        ctx.fillStyle = '#FF0000';
+        ctx.fill();
+        
+        // Draw middle joint
+        const midX = centerX + Math.cos(angle) * fingerLength * 0.5;
+        const midY = centerY + Math.sin(angle) * fingerLength * 0.5;
+        ctx.beginPath();
+        ctx.arc(midX, midY, 3, 0, 2 * Math.PI);
         ctx.fillStyle = '#FF0000';
         ctx.fill();
       }
@@ -107,15 +139,21 @@ const HandDetection: React.FC = () => {
             canvasRef.current.width = videoWidth;
             canvasRef.current.height = videoHeight;
             
-            setIsActive(true);
-            setIsLoading(false);
-            detectHands();
+            videoRef.current.play().then(() => {
+              setIsActive(true);
+              setIsLoading(false);
+              // Start the animation loop
+              animationFrameRef.current = requestAnimationFrame(updateCanvas);
+            }).catch(err => {
+              setError('Failed to play video: ' + err.message);
+              setIsLoading(false);
+            });
           }
         };
-        await videoRef.current.play();
       }
     } catch (err) {
-      setError('Failed to access camera. Please ensure camera permissions are granted.');
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to access camera: ${errorMessage}. Please ensure camera permissions are granted.`);
       console.error('Camera error:', err);
       setIsLoading(false);
     }
@@ -127,6 +165,7 @@ const HandDetection: React.FC = () => {
     
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
 
     if (videoRef.current && videoRef.current.srcObject) {
@@ -204,13 +243,13 @@ const HandDetection: React.FC = () => {
         <div className="mt-6 text-sm text-gray-600">
           <h3 className="font-semibold mb-2">Features:</h3>
           <ul className="list-disc list-inside space-y-1">
-            <li>Camera access and visualization</li>
-            <li>Demo hand outline drawing with green connections</li>
-            <li>Red landmark points for demonstration</li>
+            <li>Live camera feed with simulated hand detection</li>
+            <li>Animated hand outlines with green connections</li>
+            <li>Red landmark points that move naturally</li>
             <li>Simulates detection of up to 2 hands</li>
           </ul>
           <p className="mt-2 text-xs text-gray-500">
-            Note: This is a simplified demo that simulates hand detection without using TensorFlow.js or MediaPipe.
+            Note: This is a simulated demo. No actual hand detection is performed to avoid compatibility issues.
           </p>
         </div>
       </Card>
