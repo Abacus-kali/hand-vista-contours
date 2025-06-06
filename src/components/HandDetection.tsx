@@ -1,9 +1,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Hands, Results } from '@mediapipe/hands';
-import { Camera } from '@mediapipe/camera_utils';
-import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
-import { HAND_CONNECTIONS } from '@mediapipe/hands';
+import * as tf from '@tensorflow/tfjs';
+import * as handPoseDetection from '@tensorflow-models/hand-pose-detection';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
@@ -13,93 +11,145 @@ const HandDetection: React.FC = () => {
   const [isActive, setIsActive] = useState(false);
   const [handCount, setHandCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const cameraRef = useRef<Camera | null>(null);
-  const handsRef = useRef<Hands | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const detectorRef = useRef<handPoseDetection.HandDetector | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!videoRef.current || !canvasRef.current) return;
-
-    const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-      }
-    });
-
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    hands.onResults((results: Results) => {
-      if (!canvasRef.current) return;
-
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      canvas.width = videoRef.current?.videoWidth || 640;
-      canvas.height = videoRef.current?.videoHeight || 480;
-
-      ctx.save();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw the video frame
-      if (videoRef.current) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      }
-
-      if (results.multiHandLandmarks) {
-        setHandCount(results.multiHandLandmarks.length);
+    const initializeDetector = async () => {
+      try {
+        setIsLoading(true);
+        await tf.ready();
         
-        for (const landmarks of results.multiHandLandmarks) {
-          // Draw hand connections (outline)
-          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-            color: '#00FF00',
-            lineWidth: 2
-          });
-          
-          // Draw hand landmarks (points)
-          drawLandmarks(ctx, landmarks, {
-            color: '#FF0000',
-            lineWidth: 2
-          });
-        }
-      } else {
-        setHandCount(0);
+        const model = handPoseDetection.SupportedModels.MediaPipeHands;
+        const detectorConfig = {
+          runtime: 'tfjs' as const,
+          modelType: 'full' as const,
+          maxHands: 2,
+          solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+        };
+        
+        const detector = await handPoseDetection.createDetector(model, detectorConfig);
+        detectorRef.current = detector;
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Failed to initialize hand detector:', err);
+        setError('Failed to initialize hand detection model');
+        setIsLoading(false);
       }
-      
-      ctx.restore();
-    });
+    };
 
-    handsRef.current = hands;
-
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (videoRef.current && hands) {
-          await hands.send({ image: videoRef.current });
-        }
-      },
-      width: 640,
-      height: 480
-    });
-
-    cameraRef.current = camera;
+    initializeDetector();
 
     return () => {
-      if (cameraRef.current) {
-        cameraRef.current.stop();
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
     };
   }, []);
 
+  const drawHands = (hands: handPoseDetection.Hand[]) => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw video frame
+    if (videoRef.current) {
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    }
+
+    // Draw hands
+    hands.forEach((hand) => {
+      const keypoints = hand.keypoints;
+      
+      // Draw landmarks (points)
+      keypoints.forEach((keypoint) => {
+        if (keypoint.score && keypoint.score > 0.5) {
+          ctx.beginPath();
+          ctx.arc(keypoint.x, keypoint.y, 3, 0, 2 * Math.PI);
+          ctx.fillStyle = '#FF0000';
+          ctx.fill();
+        }
+      });
+
+      // Draw connections (simplified hand outline)
+      const connections = [
+        [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+        [0, 5], [5, 6], [6, 7], [7, 8], // index
+        [0, 9], [9, 10], [10, 11], [11, 12], // middle
+        [0, 13], [13, 14], [14, 15], [15, 16], // ring
+        [0, 17], [17, 18], [18, 19], [19, 20], // pinky
+        [5, 9], [9, 13], [13, 17] // palm connections
+      ];
+
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      
+      connections.forEach(([start, end]) => {
+        const startPoint = keypoints[start];
+        const endPoint = keypoints[end];
+        
+        if (startPoint.score && startPoint.score > 0.5 && 
+            endPoint.score && endPoint.score > 0.5) {
+          ctx.beginPath();
+          ctx.moveTo(startPoint.x, startPoint.y);
+          ctx.lineTo(endPoint.x, endPoint.y);
+          ctx.stroke();
+        }
+      });
+    });
+  };
+
+  const detectHands = async () => {
+    if (!videoRef.current || !detectorRef.current || !canvasRef.current) return;
+
+    try {
+      const hands = await detectorRef.current.estimateHands(videoRef.current);
+      setHandCount(hands.length);
+      drawHands(hands);
+    } catch (err) {
+      console.error('Hand detection error:', err);
+    }
+
+    if (isActive) {
+      animationFrameRef.current = requestAnimationFrame(detectHands);
+    }
+  };
+
   const startDetection = async () => {
     try {
       setError(null);
-      if (cameraRef.current) {
-        await cameraRef.current.start();
-        setIsActive(true);
+      
+      if (!detectorRef.current) {
+        setError('Hand detection model not loaded yet. Please try again.');
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: 640, 
+          height: 480,
+          facingMode: 'user'
+        } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          if (videoRef.current && canvasRef.current) {
+            const { videoWidth, videoHeight } = videoRef.current;
+            canvasRef.current.width = videoWidth;
+            canvasRef.current.height = videoHeight;
+            setIsActive(true);
+            detectHands();
+          }
+        };
+        await videoRef.current.play();
       }
     } catch (err) {
       setError('Failed to access camera. Please ensure camera permissions are granted.');
@@ -108,10 +158,24 @@ const HandDetection: React.FC = () => {
   };
 
   const stopDetection = () => {
-    if (cameraRef.current) {
-      cameraRef.current.stop();
-      setIsActive(false);
-      setHandCount(0);
+    setIsActive(false);
+    setHandCount(0);
+    
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
     }
   };
 
@@ -125,6 +189,7 @@ const HandDetection: React.FC = () => {
             ref={videoRef}
             className="hidden"
             playsInline
+            muted
           />
           <canvas
             ref={canvasRef}
@@ -134,7 +199,9 @@ const HandDetection: React.FC = () => {
           
           {!isActive && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-lg">
-              <p className="text-gray-500 text-lg">Camera feed will appear here</p>
+              <p className="text-gray-500 text-lg">
+                {isLoading ? 'Loading hand detection model...' : 'Camera feed will appear here'}
+              </p>
             </div>
           )}
         </div>
@@ -144,8 +211,9 @@ const HandDetection: React.FC = () => {
             onClick={isActive ? stopDetection : startDetection}
             variant={isActive ? "destructive" : "default"}
             size="lg"
+            disabled={isLoading}
           >
-            {isActive ? 'Stop Detection' : 'Start Detection'}
+            {isLoading ? 'Loading...' : isActive ? 'Stop Detection' : 'Start Detection'}
           </Button>
           
           <div className="text-lg font-semibold">
@@ -162,7 +230,7 @@ const HandDetection: React.FC = () => {
         <div className="mt-6 text-sm text-gray-600">
           <h3 className="font-semibold mb-2">Features:</h3>
           <ul className="list-disc list-inside space-y-1">
-            <li>Real-time hand detection using MediaPipe</li>
+            <li>Real-time hand detection using TensorFlow.js</li>
             <li>Hand outline drawing with green connections</li>
             <li>Red landmark points for precise tracking</li>
             <li>Supports detection of up to 2 hands simultaneously</li>
